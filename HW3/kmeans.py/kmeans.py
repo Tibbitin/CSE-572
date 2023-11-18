@@ -2,6 +2,14 @@ import math
 import random
 import time
 from tkinter import *
+from scipy.spatial.distance import cdist
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial.distance import jaccard
+from sklearn.model_selection import train_test_split
+import numpy as np
+import pandas as pd
+from sklearn.metrics import accuracy_score
+from collections import Counter
 
 ######################################################################
 # This section contains functions for loading CSV (comma separated values)
@@ -74,13 +82,44 @@ def isValidNumberString(s):
 # using the k-means algorithm.
 ######################################################################
 
-def distance(instance1, instance2):
-    if instance1 == None or instance2 == None:
+def distance(instance1, instance2, method):
+    '''
+    instance1 = np.array(instance1[1:]).reshape(1, -1)
+    instance2 = np.array(instance2[1:]).reshape(1, -1)
+    
+    if instance1 is None or instance2 is None:
         return float("inf")
-    sumOfSquares = 0
-    for i in range(1, len(instance1)):
-        sumOfSquares += (instance1[i] - instance2[i])**2
-    return sumOfSquares
+    
+    return cdist(instance1, instance2, metric=method)
+    '''
+    if method == "euclidean":
+        if instance1 is None or instance2 is None:
+            return float("inf")
+        sumOfSquares = 0
+        for i in range(1, len(instance1)):
+            sumOfSquares += (instance1[i] - instance2[i])**2
+        return sumOfSquares
+    elif method == "cosine":
+        if instance1 is None or instance2 is None:
+            return float("inf")
+        instance1 = np.array(instance1[1:]).reshape(1, -1)[0]
+        instance2 = np.array(instance2[1:]).reshape(1, -1)[0]
+        dot_prod = np.dot(instance1, instance2)
+        length_prod = np.linalg.norm(instance1) * np.linalg.norm(instance2)
+        cosine_dist = (1 - (dot_prod / length_prod))
+        return cosine_dist
+        #return (1 - cosine_similarity(instance1, instance2)[0, 0]) ** 2
+    else:
+        if instance1 is None or instance2 is None:
+            return float("inf")
+        instance1 = np.array(instance1[1:]).reshape(1, -1)[0]
+        instance2 = np.array(instance2[1:]).reshape(1, -1)[0]
+        diff = set(instance1).symmetric_difference(set(instance2))
+        union = set(instance1).union(set(instance2))
+        jaccard_dist = len(diff) / len(union)
+        return jaccard_dist
+
+    
 
 def meanInstance(name, instanceList):
     numInstances = len(instanceList)
@@ -95,11 +134,11 @@ def meanInstance(name, instanceList):
         means[i] /= float(numInstances)
     return tuple(means)
 
-def assign(instance, centroids):
-    minDistance = distance(instance, centroids[0])
+def assign(instance, centroids, method):
+    minDistance = distance(instance, centroids[0], method)
     minDistanceIndex = 0
     for i in range(1, len(centroids)):
-        d = distance(instance, centroids[i])
+        d = distance(instance, centroids[i], method)
         if (d < minDistance):
             minDistance = d
             minDistanceIndex = i
@@ -111,12 +150,25 @@ def createEmptyListOfLists(numSubLists):
         myList.append([])
     return myList
 
-def assignAll(instances, centroids):
+def assignAll(instances, labels, centroids, method):
     clusters = createEmptyListOfLists(len(centroids))
-    for instance in instances:
-        clusterIndex = assign(instance, centroids)
+    cluster_labels = createEmptyListOfLists(len(centroids))
+    #label_index = createEmptyListOfLists(len(centroids))
+
+    
+    for instance, label in zip(instances, labels):
+        clusterIndex = assign(instance, centroids, method)
         clusters[clusterIndex].append(instance)
-    return clusters
+        cluster_labels[clusterIndex].append(label)
+    return clusters, cluster_labels
+
+    '''
+    for i, instance in enumerate(instances):
+        clusterIndex = assign(instance, centroids, method)
+        clusters[clusterIndex].append(instance)
+        label_index[clusterIndex].append(i)
+    return clusters, label_index
+    '''
 
 def computeCentroids(clusters):
     centroids = []
@@ -126,12 +178,28 @@ def computeCentroids(clusters):
         centroids.append(centroid)
     return centroids
 
-def kmeans(instances, k, animation=False, initCentroids=None):
+def kmeans(instances, labels, k, method, animation=False, initCentroids=None):
     result = {}
     if (initCentroids == None or len(initCentroids) < k):
-        # randomly select k initial centroids
+        # randomly select k initial centroids and ensure initial centroids have distinct labels
+        '''
+        while True:
+            random.seed(time.time())
+
+            indices = random.sample(range(len(instances)), k)
+            candidate_centroids = [instances[i] for i in indices]
+            unique_labels = pd.Series([labels[i] for i in indices]).nunique()
+
+            if unique_labels == k:
+                centroids = candidate_centroids
+                break     
+        
+
+        '''
         random.seed(time.time())
         centroids = random.sample(instances, k)
+        
+        
     else:
         centroids = initCentroids
     prevCentroids = []
@@ -142,32 +210,61 @@ def kmeans(instances, k, animation=False, initCentroids=None):
         clusters[0] = instances
         paintClusters2D(canvas, clusters, centroids, "Initial centroids")
         time.sleep(delay)
+
     iteration = 0
     while (centroids != prevCentroids):
+        #print(iteration)
         iteration += 1
-        clusters = assignAll(instances, centroids)
+        clusters, clusters_labels = assignAll(instances, labels, centroids, method)
         if animation:
             paintClusters2D(canvas, clusters, centroids, "Assign %d" % iteration)
             time.sleep(delay)
         prevCentroids = centroids
         centroids = computeCentroids(clusters)
-        withinss = computeWithinss(clusters, centroids)
+        withinss = computeWithinss(clusters, centroids, method)
         if animation:
             paintClusters2D(canvas, clusters, centroids,
                             "Update %d, withinss %.1f" % (iteration, withinss))
             time.sleep(delay)
+        
+        for i in range(len(clusters_labels)):
+                clusters_labels[i] = [int(item[0]) for item in clusters_labels[i]]
+        
+        true_labels = clusters_labels
+        pred_labels = []
+        for i, l in enumerate(true_labels):
+            majority_dict = {}
+
+            if l == []:
+                pred_labels.append([])
+                continue
+
+            for entry in l:
+                if entry not in majority_dict:
+                    majority_dict[entry] = 0
+                majority_dict[entry] += 1
+            
+            majority_label = max(majority_dict.items(), key=lambda x: x[1])[0]
+            pred_labels.append(([majority_label] * len(clusters_labels[i])))
+
+
+    print(iteration)
+
     result["clusters"] = clusters
     result["centroids"] = centroids
     result["withinss"] = withinss
+    result["pred_labels"] = pred_labels
+    result["true_labels"] = true_labels
+
     return result
 
-def computeWithinss(clusters, centroids):
+def computeWithinss(clusters, centroids, method):
     result = 0
     for i in range(len(centroids)):
         centroid = centroids[i]
         cluster = clusters[i]
         for instance in cluster:
-            result += distance(centroid, instance)
+            result += distance(centroid, instance, method)
     return result
 
 # Repeats k-means clustering n times, and returns the clustering
@@ -342,6 +439,155 @@ def paintClusters2D(canvas, clusters, centroids, title=""):
 
 #dataset = loadCSV("/Users/yanjiefu/Downloads/tshirts-G.csv")
 dataset = loadCSV("C:\CSE 572\CSE-572\HW3\kmeans_data\data.csv")
-showDataset2D(dataset)
-clustering = kmeans(dataset, 3, True)
-printTable(clustering["centroids"])
+label_data = loadCSV("C:\CSE 572\CSE-572\HW3\kmeans_data\label.csv")
+
+clean_label_data = []
+for label in label_data:
+    clean_label_data.append(int(label[0]))
+
+#showDataset2D(dataset)
+#printTable(clustering["centroids"])
+
+
+for method in ["euclidean", "cosine", "jaccard"]:
+    clustering = kmeans(dataset, label_data, k=10, method=method, animation=False)
+    print(f"{method} SSE: ", clustering['withinss'])
+
+    clusters = clustering['clusters']
+    clusters_labels = clustering['pred_labels']
+    true_labels = clustering['true_labels']
+
+    yhat = []
+    y = []
+    for pred_sublist, true_sublist in zip(clusters_labels, true_labels):
+        yhat.extend(pred_sublist)
+        y.extend(true_sublist)
+
+    accuracy = accuracy_score(y, yhat)
+    print(f"{method} accuracy: ", accuracy)
+    print()
+
+
+def kmeans_constraint(instances, labels, k, max_iter, method, animation=False, initCentroids=None):
+    result = {}
+    if (initCentroids == None or len(initCentroids) < k):
+        # randomly select k initial centroids 
+        random.seed(time.time())
+        centroids = random.sample(instances, k)
+        
+    else:
+        centroids = initCentroids
+    prevCentroids = []
+    if animation:
+        delay = 1.0 # seconds
+        canvas = prepareWindow(instances)
+        clusters = createEmptyListOfLists(k)
+        clusters[0] = instances
+        paintClusters2D(canvas, clusters, centroids, "Initial centroids")
+        time.sleep(delay)
+    iteration = 0
+    priorSSE = 0
+    withinss = 0
+    while (centroids != prevCentroids and priorSSE >= withinss and iteration < max_iter):
+        print(iteration)
+        
+        iteration += 1
+        clusters, clusters_labels = assignAll(instances, labels, centroids, method)
+        if animation:
+            paintClusters2D(canvas, clusters, centroids, "Assign %d" % iteration)
+            time.sleep(delay)
+        prevCentroids = centroids
+        centroids = computeCentroids(clusters)
+        withinss = computeWithinss(clusters, centroids, method)
+        if animation:
+            paintClusters2D(canvas, clusters, centroids,
+                            "Update %d, withinss %.1f" % (iteration, withinss))
+            time.sleep(delay)
+        
+        
+        for i in range(len(clusters_labels)):
+                clusters_labels[i] = [int(item[0]) for item in clusters_labels[i]]
+
+        true_labels = clusters_labels
+        pred_labels = []
+        for i, l in enumerate(true_labels):
+            majority_dict = {}
+
+            if l == []:
+                pred_labels.append([])
+                continue
+
+            for entry in l:
+                if entry not in majority_dict:
+                    majority_dict[entry] = 0
+                majority_dict[entry] += 1
+            
+            majority_label = max(majority_dict.items(), key=lambda x: x[1])[0]
+            pred_labels.append(([majority_label] * len(clusters_labels[i])))
+        
+        if priorSSE < withinss and priorSSE != 0:
+            break
+        priorSSE = withinss
+    print(iteration)
+
+    result["clusters"] = clusters
+    result["centroids"] = centroids
+    result["withinss"] = withinss
+    result["pred_labels"] = pred_labels
+    result["true_labels"] = true_labels
+
+    return result
+
+for method in ["euclidean", "cosine", "jaccard"]:
+    clustering = kmeans_constraint(dataset, label_data, k=10, max_iter=500, method=method, animation=False)
+    print(f"{method} SSE (constrained): ", clustering['withinss'])
+
+    clusters = clustering['clusters']
+    clusters_labels = clustering['pred_labels']
+    true_labels = clustering['true_labels']
+
+    yhat = []
+    y = []
+    for pred_sublist, true_sublist in zip(clusters_labels, true_labels):
+        yhat.extend(pred_sublist)
+        y.extend(true_sublist)
+
+    
+    accuracy = accuracy_score(y, yhat)
+    print(f"{method} accuracy: ", accuracy)
+    print()
+
+'''
+for method in ["euclidean", "cosine", "jaccard"]:
+    clustering = kmeans_constraint(dataset, clean_label_data, k=10, max_iter=5, method=method, animation=False)
+    print(f"{method} SSE (constrained): ", clustering['withinss'])
+
+    clusters = clustering['clusters']
+    label_indices = clustering['label_indices']
+
+    yhat = []
+    y = []
+
+    for i in range(len(label_indices)):
+        majority_dict = {}
+        if len(label_indices[i]) == 0:
+                continue
+        for l in range(len(label_indices[i])):
+            if clean_label_data[l] not in majority_dict:
+                majority_dict[clean_label_data[l]] = 0
+            majority_dict[clean_label_data[l]] += 1
+
+        majority_label = max(majority_dict.items(), key=lambda x: x[1])[0]
+        print("majority_label: ", majority_label, " - ", majority_dict)
+        yhat.extend([majority_label] * len(label_indices[i]))
+            
+    
+    for i in range(len(label_indices)):
+        temp = []
+        for l in range(len(label_indices[i])):
+            y.append(clean_label_data[l])
+    
+    accuracy = accuracy_score(y, yhat)
+    print(f"{method} accuracy (constrained): ", accuracy)
+    print()
+'''
