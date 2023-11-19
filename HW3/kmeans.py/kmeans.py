@@ -2,14 +2,9 @@ import math
 import random
 import time
 from tkinter import *
-from scipy.spatial.distance import cdist
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy.spatial.distance import jaccard
-from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score
-from collections import Counter
 
 ######################################################################
 # This section contains functions for loading CSV (comma separated values)
@@ -83,22 +78,13 @@ def isValidNumberString(s):
 ######################################################################
 
 def distance(instance1, instance2, method):
-    '''
-    instance1 = np.array(instance1[1:]).reshape(1, -1)
-    instance2 = np.array(instance2[1:]).reshape(1, -1)
-    
-    if instance1 is None or instance2 is None:
-        return float("inf")
-    
-    return cdist(instance1, instance2, metric=method)
-    '''
     if method == "euclidean":
         if instance1 is None or instance2 is None:
             return float("inf")
         sumOfSquares = 0
         for i in range(1, len(instance1)):
             sumOfSquares += (instance1[i] - instance2[i])**2
-        return sumOfSquares
+        return math.sqrt(sumOfSquares)
     elif method == "cosine":
         if instance1 is None or instance2 is None:
             return float("inf")
@@ -108,16 +94,16 @@ def distance(instance1, instance2, method):
         length_prod = np.linalg.norm(instance1) * np.linalg.norm(instance2)
         cosine_dist = (1 - (dot_prod / length_prod))
         return cosine_dist
-        #return (1 - cosine_similarity(instance1, instance2)[0, 0]) ** 2
     else:
         if instance1 is None or instance2 is None:
             return float("inf")
-        instance1 = np.array(instance1[1:]).reshape(1, -1)[0]
-        instance2 = np.array(instance2[1:]).reshape(1, -1)[0]
-        diff = set(instance1).symmetric_difference(set(instance2))
-        union = set(instance1).union(set(instance2))
-        jaccard_dist = len(diff) / len(union)
-        return jaccard_dist
+        
+        numer = 0
+        denom = 0
+        for i in range(1, len(instance1)):
+            numer += min(instance1[i], instance2[i])
+            denom += max(instance1[i], instance2[i])
+        return 1 - (numer / denom)
 
     
 
@@ -153,22 +139,12 @@ def createEmptyListOfLists(numSubLists):
 def assignAll(instances, labels, centroids, method):
     clusters = createEmptyListOfLists(len(centroids))
     cluster_labels = createEmptyListOfLists(len(centroids))
-    #label_index = createEmptyListOfLists(len(centroids))
-
     
     for instance, label in zip(instances, labels):
         clusterIndex = assign(instance, centroids, method)
         clusters[clusterIndex].append(instance)
         cluster_labels[clusterIndex].append(label)
     return clusters, cluster_labels
-
-    '''
-    for i, instance in enumerate(instances):
-        clusterIndex = assign(instance, centroids, method)
-        clusters[clusterIndex].append(instance)
-        label_index[clusterIndex].append(i)
-    return clusters, label_index
-    '''
 
 def computeCentroids(clusters):
     centroids = []
@@ -181,25 +157,9 @@ def computeCentroids(clusters):
 def kmeans(instances, labels, k, method, animation=False, initCentroids=None):
     result = {}
     if (initCentroids == None or len(initCentroids) < k):
-        # randomly select k initial centroids and ensure initial centroids have distinct labels
-        '''
-        while True:
-            random.seed(time.time())
-
-            indices = random.sample(range(len(instances)), k)
-            candidate_centroids = [instances[i] for i in indices]
-            unique_labels = pd.Series([labels[i] for i in indices]).nunique()
-
-            if unique_labels == k:
-                centroids = candidate_centroids
-                break     
-        
-
-        '''
+        # randomly select k initial centroids
         random.seed(time.time())
         centroids = random.sample(instances, k)
-        
-        
     else:
         centroids = initCentroids
     prevCentroids = []
@@ -213,7 +173,6 @@ def kmeans(instances, labels, k, method, animation=False, initCentroids=None):
 
     iteration = 0
     while (centroids != prevCentroids):
-        #print(iteration)
         iteration += 1
         clusters, clusters_labels = assignAll(instances, labels, centroids, method)
         if animation:
@@ -264,7 +223,7 @@ def computeWithinss(clusters, centroids, method):
         centroid = centroids[i]
         cluster = clusters[i]
         for instance in cluster:
-            result += distance(centroid, instance, method)
+            result += distance(centroid, instance, method)**2
     return result
 
 # Repeats k-means clustering n times, and returns the clustering
@@ -438,12 +397,8 @@ def paintClusters2D(canvas, clusters, centroids, title=""):
 ######################################################################
 
 #dataset = loadCSV("/Users/yanjiefu/Downloads/tshirts-G.csv")
-dataset = loadCSV("C:\CSE 572\CSE-572\HW3\kmeans_data\data.csv")
-label_data = loadCSV("C:\CSE 572\CSE-572\HW3\kmeans_data\label.csv")
-
-clean_label_data = []
-for label in label_data:
-    clean_label_data.append(int(label[0]))
+dataset = loadCSV("C:\\CSE 572\\CSE-572\\HW3\\kmeans_data\\data.csv")
+label_data = loadCSV("C:\\CSE 572\\CSE-572\\HW3\\kmeans_data\\label.csv")
 
 #showDataset2D(dataset)
 #printTable(clustering["centroids"])
@@ -473,8 +428,7 @@ def kmeans_constraint(instances, labels, k, max_iter, method, animation=False, i
     if (initCentroids == None or len(initCentroids) < k):
         # randomly select k initial centroids 
         random.seed(time.time())
-        centroids = random.sample(instances, k)
-        
+        centroids = random.sample(instances, k)      
     else:
         centroids = initCentroids
     prevCentroids = []
@@ -489,8 +443,6 @@ def kmeans_constraint(instances, labels, k, max_iter, method, animation=False, i
     priorSSE = 0
     withinss = 0
     while (centroids != prevCentroids and priorSSE >= withinss and iteration < max_iter):
-        print(iteration)
-        
         iteration += 1
         clusters, clusters_labels = assignAll(instances, labels, centroids, method)
         if animation:
@@ -556,38 +508,3 @@ for method in ["euclidean", "cosine", "jaccard"]:
     accuracy = accuracy_score(y, yhat)
     print(f"{method} accuracy: ", accuracy)
     print()
-
-'''
-for method in ["euclidean", "cosine", "jaccard"]:
-    clustering = kmeans_constraint(dataset, clean_label_data, k=10, max_iter=5, method=method, animation=False)
-    print(f"{method} SSE (constrained): ", clustering['withinss'])
-
-    clusters = clustering['clusters']
-    label_indices = clustering['label_indices']
-
-    yhat = []
-    y = []
-
-    for i in range(len(label_indices)):
-        majority_dict = {}
-        if len(label_indices[i]) == 0:
-                continue
-        for l in range(len(label_indices[i])):
-            if clean_label_data[l] not in majority_dict:
-                majority_dict[clean_label_data[l]] = 0
-            majority_dict[clean_label_data[l]] += 1
-
-        majority_label = max(majority_dict.items(), key=lambda x: x[1])[0]
-        print("majority_label: ", majority_label, " - ", majority_dict)
-        yhat.extend([majority_label] * len(label_indices[i]))
-            
-    
-    for i in range(len(label_indices)):
-        temp = []
-        for l in range(len(label_indices[i])):
-            y.append(clean_label_data[l])
-    
-    accuracy = accuracy_score(y, yhat)
-    print(f"{method} accuracy (constrained): ", accuracy)
-    print()
-'''
